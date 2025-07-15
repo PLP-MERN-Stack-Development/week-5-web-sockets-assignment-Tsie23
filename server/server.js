@@ -35,6 +35,22 @@ const typingUsers = {};
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
 
+  // Join a room
+  socket.on('joinRoom', (room) => {
+    socket.join(room);
+    socket.currentRoom = room;
+    socket.emit('systemMessage', `You joined room: ${room}`);
+  });
+
+  // Send message to a room
+  socket.on('roomMessage', ({ room, message, username }) => {
+    io.to(room).emit('chatMessage', {
+      username,
+      message,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   // Handle user joining
   socket.on('user_join', (username) => {
     users[socket.id] = { username, id: socket.id };
@@ -93,6 +109,21 @@ io.on('connection', (socket) => {
     socket.emit('private_message', messageData);
   });
 
+  // Handle file messages
+  socket.on('fileMessage', ({ room, file, filename, username }) => {
+    io.to(room).emit('fileMessage', {
+      username,
+      filename,
+      file, // base64 string
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // Handle message reactions
+  socket.on('reactMessage', ({ messageId, reaction, room }) => {
+    io.to(room).emit('messageReaction', { messageId, reaction });
+  });
+
   // Handle disconnection
   socket.on('disconnect', () => {
     if (users[socket.id]) {
@@ -129,4 +160,4 @@ server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
-module.exports = { app, server, io }; 
+module.exports = { app, server, io };

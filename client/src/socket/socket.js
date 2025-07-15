@@ -146,4 +146,20 @@ export const useSocket = () => {
   };
 };
 
-export default socket; 
+export const joinRoom = (room) => {
+  socket.emit('joinRoom', room);
+};
+
+export const sendRoomMessage = (room, message, username) => {
+  socket.emit('roomMessage', { room, message, username });
+};
+
+export const sendFileMessage = (room, file, filename, username) => {
+  socket.emit('fileMessage', { room, file, filename, username });
+};
+
+export const reactToMessage = (messageId, reaction, room) => {
+  socket.emit('reactMessage', { messageId, reaction, room });
+};
+
+export default socket;
