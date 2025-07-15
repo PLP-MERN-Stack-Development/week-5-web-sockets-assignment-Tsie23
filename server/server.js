@@ -12,24 +12,22 @@ dotenv.config();
 
 // Initialize Express app
 const app = express();
+app.use(cors());
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
-    methods: ['GET', 'POST'],
-    credentials: true,
-  },
+  cors: { origin: '*' }
 });
 
+// Track users and rooms
+let users = {}; // socket.id -> { username, room }
+let roomUsers = {}; // room -> [username]
+let messages = {}; // room -> [{ username, message, timestamp, type, filename, file }]
+let unreadCounts = {}; // room -> { username -> count }
+let registeredUsers = []; // Array of usernames
+
 // Middleware
-app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-
-// Store connected users and messages
-const users = {};
-const messages = [];
-const typingUsers = {};
 
 // Socket.io connection handler
 io.on('connection', (socket) => {
@@ -37,106 +35,110 @@ io.on('connection', (socket) => {
 
   // Join a room
   socket.on('joinRoom', (room) => {
+    if (users[socket.id]) {
+      // Remove from previous room
+      const prevRoom = users[socket.id].room;
+      if (roomUsers[prevRoom]) {
+        roomUsers[prevRoom] = roomUsers[prevRoom].filter(u => u !== users[socket.id].username);
+      }
+      socket.leave(prevRoom);
+    }
     socket.join(room);
-    socket.currentRoom = room;
-    socket.emit('systemMessage', `You joined room: ${room}`);
+    users[socket.id] = { username: socket.handshake.query.username, room };
+    if (!roomUsers[room]) roomUsers[room] = [];
+    if (!roomUsers[room].includes(users[socket.id].username)) {
+      roomUsers[room].push(users[socket.id].username);
+    }
+    if (!unreadCounts[room]) unreadCounts[room] = {};
+    unreadCounts[room][users[socket.id].username] = 0;
+    io.to(room).emit('onlineUsers', roomUsers[room]);
   });
 
-  // Send message to a room
+  // Get online users for a room
+  socket.on('getOnlineUsers', (room) => {
+    io.to(socket.id).emit('onlineUsers', roomUsers[room] || []);
+  });
+
+  // Broadcast chat message and store
   socket.on('roomMessage', ({ room, message, username }) => {
-    io.to(room).emit('chatMessage', {
+    const msgObj = {
       username,
       message,
       timestamp: new Date().toISOString(),
+      type: 'text'
+    };
+    if (!messages[room]) messages[room] = [];
+    messages[room].push(msgObj);
+    // Limit to last 100 messages per room
+    if (messages[room].length > 100) messages[room] = messages[room].slice(-100);
+    io.to(room).emit('chatMessage', msgObj);
+
+    // Increment unread count for others
+    Object.keys(users).forEach(id => {
+      if (users[id].room === room && users[id].username !== username) {
+        if (!unreadCounts[room]) unreadCounts[room] = {};
+        unreadCounts[room][users[id].username] = (unreadCounts[room][users[id].username] || 0) + 1;
+        io.to(id).emit('unreadCount', unreadCounts[room][users[id].username]);
+      }
     });
   });
 
-  // Handle user joining
-  socket.on('user_join', (username) => {
-    users[socket.id] = { username, id: socket.id };
-    io.emit('user_list', Object.values(users));
-    io.emit('user_joined', { username, id: socket.id });
-    console.log(`${username} joined the chat`);
-  });
-
-  // Handle chat messages
-  socket.on('send_message', (messageData) => {
-    const message = {
-      ...messageData,
-      id: Date.now(),
-      sender: users[socket.id]?.username || 'Anonymous',
-      senderId: socket.id,
-      timestamp: new Date().toISOString(),
-    };
-    
-    messages.push(message);
-    
-    // Limit stored messages to prevent memory issues
-    if (messages.length > 100) {
-      messages.shift();
-    }
-    
-    io.emit('receive_message', message);
-  });
-
-  // Handle typing indicator
-  socket.on('typing', (isTyping) => {
-    if (users[socket.id]) {
-      const username = users[socket.id].username;
-      
-      if (isTyping) {
-        typingUsers[socket.id] = username;
-      } else {
-        delete typingUsers[socket.id];
-      }
-      
-      io.emit('typing_users', Object.values(typingUsers));
-    }
-  });
-
-  // Handle private messages
-  socket.on('private_message', ({ to, message }) => {
-    const messageData = {
-      id: Date.now(),
-      sender: users[socket.id]?.username || 'Anonymous',
-      senderId: socket.id,
-      message,
-      timestamp: new Date().toISOString(),
-      isPrivate: true,
-    };
-    
-    socket.to(to).emit('private_message', messageData);
-    socket.emit('private_message', messageData);
-  });
-
-  // Handle file messages
+  // Broadcast file message and store
   socket.on('fileMessage', ({ room, file, filename, username }) => {
-    io.to(room).emit('fileMessage', {
+    const msgObj = {
       username,
       filename,
-      file, // base64 string
+      file,
       timestamp: new Date().toISOString(),
-    });
+      type: 'file'
+    };
+    if (!messages[room]) messages[room] = [];
+    messages[room].push(msgObj);
+    if (messages[room].length > 100) messages[room] = messages[room].slice(-100);
+    io.to(room).emit('fileMessage', msgObj);
   });
 
-  // Handle message reactions
+  // Broadcast typing indicator
+  socket.on('typing', ({ room, username }) => {
+    socket.to(room).emit('userTyping', { username });
+  });
+
+  // Message reactions
   socket.on('reactMessage', ({ messageId, reaction, room }) => {
     io.to(room).emit('messageReaction', { messageId, reaction });
   });
 
-  // Handle disconnection
-  socket.on('disconnect', () => {
-    if (users[socket.id]) {
-      const { username } = users[socket.id];
-      io.emit('user_left', { username, id: socket.id });
-      console.log(`${username} left the chat`);
+  // Private messaging
+  socket.on('privateMessage', ({ to, message, username, timestamp }) => {
+    // Find recipient socket id
+    const recipientId = Object.keys(users).find(
+      id => users[id].username === to && users[id].room === users[socket.id].room
+    );
+    if (recipientId) {
+      io.to(recipientId).emit('privateMessage', { username, message, timestamp });
+      io.to(socket.id).emit('privateMessage', { username, message, timestamp }); // echo to sender
     }
-    
-    delete users[socket.id];
-    delete typingUsers[socket.id];
-    
-    io.emit('user_list', Object.values(users));
-    io.emit('typing_users', Object.values(typingUsers));
+  });
+
+  // When a user reads messages (e.g., switches to the room)
+  socket.on('readMessages', (room) => {
+    if (users[socket.id]) {
+      unreadCounts[room][users[socket.id].username] = 0;
+      socket.emit('unreadCount', 0);
+    }
+  });
+
+  // Handle disconnect
+  socket.on('disconnect', () => {
+    const user = users[socket.id];
+    if (user) {
+      const { room, username } = user;
+      if (roomUsers[room]) {
+        roomUsers[room] = roomUsers[room].filter(u => u !== username);
+        io.to(room).emit('onlineUsers', roomUsers[room]);
+      }
+      delete users[socket.id];
+    }
   });
 });
 
@@ -147,6 +149,27 @@ app.get('/api/messages', (req, res) => {
 
 app.get('/api/users', (req, res) => {
   res.json(Object.values(users));
+});
+
+// API route for paginated messages
+app.get('/api/messages/:room', (req, res) => {
+  const room = req.params.room;
+  const page = parseInt(req.query.page) || 1;
+  const pageSize = 20;
+  const roomMessages = messages[room] || [];
+  const start = Math.max(roomMessages.length - page * pageSize, 0);
+  const end = roomMessages.length - (page - 1) * pageSize;
+  res.json(roomMessages.slice(start, end));
+});
+
+// Registration route
+app.post('/api/register', (req, res) => {
+  const { username } = req.body;
+  if (!username || registeredUsers.includes(username)) {
+    return res.status(400).json({ error: 'Username taken or invalid' });
+  }
+  registeredUsers.push(username);
+  res.json({ success: true });
 });
 
 // Root route

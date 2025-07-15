@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   joinRoom,
   sendRoomMessage,
@@ -13,6 +13,10 @@ const ChatRoom = ({ username }) => {
   const [messages, setMessages] = useState([]);
   const [rooms] = useState(['general', 'tech', 'random']);
   const [file, setFile] = useState(null);
+  const [typingUsers, setTypingUsers] = useState([]);
+  const [onlineUsers, setOnlineUsers] = useState([]);
+  const [privateRecipient, setPrivateRecipient] = useState('');
+  const typingTimeout = useRef(null);
 
   useEffect(() => {
     if (Notification.permission !== 'granted') {
@@ -20,6 +24,8 @@ const ChatRoom = ({ username }) => {
     }
 
     joinRoom(currentRoom);
+
+    socket.emit('getOnlineUsers', currentRoom);
 
     socket.on('chatMessage', (msg) => {
       setMessages((prev) => [...prev, msg]);
@@ -45,17 +51,50 @@ const ChatRoom = ({ username }) => {
       );
     });
 
+    socket.on('userTyping', ({ username: typingUser }) => {
+      setTypingUsers((prev) =>
+        prev.includes(typingUser) ? prev : [...prev, typingUser]
+      );
+      setTimeout(() => {
+        setTypingUsers((prev) => prev.filter((u) => u !== typingUser));
+      }, 2000);
+    });
+
+    socket.on('onlineUsers', (users) => {
+      setOnlineUsers(users);
+    });
+
+    socket.on('privateMessage', (msg) => {
+      setMessages((prev) => [...prev, { ...msg, private: true }]);
+      if (Notification.permission === 'granted') {
+        new Notification(`Private from ${msg.username}: ${msg.message}`);
+      }
+    });
+
     return () => {
       socket.off('chatMessage');
       socket.off('fileMessage');
       socket.off('messageReaction');
+      socket.off('userTyping');
+      socket.off('onlineUsers');
+      socket.off('privateMessage');
     };
   }, [currentRoom]);
 
   const handleSend = () => {
     if (message.trim()) {
-      sendRoomMessage(currentRoom, message, username);
+      if (privateRecipient) {
+        socket.emit('privateMessage', {
+          to: privateRecipient,
+          message,
+          username,
+          timestamp: new Date().toISOString(),
+        });
+      } else {
+        sendRoomMessage(currentRoom, message, username);
+      }
       setMessage('');
+      setPrivateRecipient('');
     }
   };
 
@@ -63,6 +102,7 @@ const ChatRoom = ({ username }) => {
     setCurrentRoom(e.target.value);
     setMessages([]);
     joinRoom(e.target.value);
+    socket.emit('getOnlineUsers', e.target.value);
   };
 
   const handleFileChange = (e) => {
@@ -80,6 +120,12 @@ const ChatRoom = ({ username }) => {
     reactToMessage(idx, reaction, currentRoom);
   };
 
+  const handleTyping = () => {
+    socket.emit('typing', { room: currentRoom, username });
+    if (typingTimeout.current) clearTimeout(typingTimeout.current);
+    typingTimeout.current = setTimeout(() => {}, 2000);
+  };
+
   return (
     <div style={{ maxWidth: 500, margin: 'auto' }}>
       <h2>Room: {currentRoom}</h2>
@@ -88,10 +134,14 @@ const ChatRoom = ({ username }) => {
           <option key={room} value={room}>{room}</option>
         ))}
       </select>
+      <div style={{ margin: '10px 0', fontSize: '0.9em', color: '#555' }}>
+        <strong>Online users:</strong> {onlineUsers.join(', ')}
+      </div>
       <div style={{ border: '1px solid #ccc', height: 300, overflowY: 'auto', margin: '10px 0', padding: 10 }}>
         {messages.map((msg, idx) => (
-          <div key={idx} style={{ marginBottom: 10 }}>
+          <div key={idx} style={{ marginBottom: 10, background: msg.private ? '#ffe' : 'inherit' }}>
             <strong>{msg.username}</strong> [{new Date(msg.timestamp).toLocaleTimeString()}]:
+            {msg.private && <span style={{ color: 'red' }}> (private)</span>}
             {msg.message && <span> {msg.message}</span>}
             {msg.file && (
               <div>
@@ -110,17 +160,42 @@ const ChatRoom = ({ username }) => {
             </div>
           </div>
         ))}
+        {typingUsers.length > 0 && (
+          <div style={{ fontStyle: 'italic', color: '#888' }}>
+            {typingUsers.join(', ')} typing...
+          </div>
+        )}
       </div>
-      <input
-        type="text"
-        value={message}
-        placeholder="Type a message..."
-        onChange={(e) => setMessage(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-        style={{ width: '70%' }}
-      />
-      <button onClick={handleSend}>Send</button>
-      <input type="file" onChange={handleFileChange} style={{ marginLeft: 10 }} />
+      <div>
+        <input
+          type="text"
+          value={message}
+          placeholder="Type a message..."
+          onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={(e) => {
+            handleTyping();
+            if (e.key === 'Enter') handleSend();
+          }}
+          style={{ width: '60%' }}
+        />
+        <button onClick={handleSend}>Send</button>
+        <input type="file" onChange={handleFileChange} style={{ marginLeft: 10 }} />
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <label>
+          Send private message to:
+          <select
+            value={privateRecipient}
+            onChange={(e) => setPrivateRecipient(e.target.value)}
+            style={{ marginLeft: 5 }}
+          >
+            <option value="">--none--</option>
+            {onlineUsers.filter(u => u !== username).map(u => (
+              <option key={u} value={u}>{u}</option>
+            ))}
+          </select>
+        </label>
+      </div>
     </div>
   );
 };

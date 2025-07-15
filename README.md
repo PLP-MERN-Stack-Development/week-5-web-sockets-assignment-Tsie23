@@ -75,4 +75,22 @@ Your work will be automatically submitted when you push to your GitHub Classroom
 - [Socket.io Documentation](https://socket.io/docs/v4/)
 - [React Documentation](https://react.dev/)
 - [Express.js Documentation](https://expressjs.com/)
-- [Building a Chat Application with Socket.io](https://socket.io/get-started/chat) 
+- [Building a Chat Application with Socket.io](https://socket.io/get-started/chat)
+
+## Features
+
+- Multi-room chat
+- Online user tracking
+- File/image sharing
+- Typing indicators
+- Private messaging
+- Message reactions
+- Unread message count
+- Read receipts
+- Simple username registration
+
+## How to Run
+
+1. `npm install` in both `server` and `client` folders
+2. Start server: `node server/server.js`
+3. Start client: `npm start` in `client`
