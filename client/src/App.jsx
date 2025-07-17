@@ -38,48 +38,67 @@ function App() {
   };
 
   return (
-    <div className="container">
-      {!isConnected ? (
-        <div>
-          <input
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="Enter username (e.g. Thato)"
-          />
-          <button onClick={handleJoin}>Join Chat</button>
-        </div>
-      ) : (
-        <div>
+    <>
+      <style>{`
+        .container {
+          max-width: 500px;
+          margin: auto;
+          padding: 16px;
+        }
+        @media (max-width: 600px) {
+          .container {
+            max-width: 100vw;
+            padding: 4vw;
+          }
+          input, button, select {
+            width: 100% !important;
+            margin-bottom: 8px;
+          }
+        }
+      `}</style>
+      <div className="container">
+        {!isConnected ? (
           <div>
             <input
-              value={message}
-              onChange={(e) => {
-                setMessage(e.target.value);
-                setIsTyping(true);
-              }}
-              placeholder="Type your message..."
-              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Enter username (e.g. Thato)"
             />
-            <input
-              value={privateId}
-              onChange={(e) => setPrivateId(e.target.value)}
-              placeholder="Private recipient ID (optional)"
-            />
-            <button onClick={handleSend}>Send</button>
-            <button onClick={disconnect}>Leave Chat</button>
+            <button onClick={handleJoin}>Join Chat</button>
           </div>
+        ) : (
+          <div>
+            <div>
+              <input
+                value={message}
+                onChange={(e) => {
+                  setMessage(e.target.value);
+                  setIsTyping(true);
+                }}
+                placeholder="Type your message..."
+                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+              />
+              <input
+                value={privateId}
+                onChange={(e) => setPrivateId(e.target.value)}
+                placeholder="Private recipient ID (optional)"
+              />
+              <button onClick={handleSend}>Send</button>
+              <button onClick={disconnect}>Leave Chat</button>
+            </div>
 
-          <div>
-            {typingUsers.length > 0 && <p>{typingUsers.join(', ')} is typing...</p>}
-            {messages.map((msg) => (
-              <p key={msg.id}>
-                <strong>{msg.sender}:</strong> {msg.message}
-              </p>
-            ))}
+            <div>
+              {typingUsers.length > 0 && <p>{typingUsers.join(', ')} is typing...</p>}
+              {messages.map((msg) => (
+                <p key={msg.id}>
+                  <strong>{msg.sender}:</strong> {msg.message}
+                </p>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </>
   );
 }
 export default App;

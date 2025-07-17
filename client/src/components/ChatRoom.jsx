@@ -6,6 +6,7 @@ import {
   reactToMessage,
   socket,
 } from '../socket/socket';
+import axios from 'axios';
 
 const ChatRoom = ({ username }) => {
   const [currentRoom, setCurrentRoom] = useState('general');
@@ -17,6 +18,34 @@ const ChatRoom = ({ username }) => {
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [privateRecipient, setPrivateRecipient] = useState('');
   const typingTimeout = useRef(null);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const notificationAudioRef = useRef(null);
+  const [search, setSearch] = useState('');
+  const [error, setError] = useState('');
+  const [isConnected, setIsConnected] = useState(true);
+
+  // Fetch paginated messages
+  const fetchMessages = async (room, pageNum = 1, prepend = false) => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await axios.get(`/api/messages/${room}?page=${pageNum}`);
+      const msgs = res.data;
+      if (msgs.length === 0) setHasMore(false);
+      if (prepend) {
+        setMessages((prev) => [...msgs, ...prev]);
+      } else {
+        setMessages(msgs);
+      }
+    } catch (err) {
+      setHasMore(false);
+      setError('Failed to load messages.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (Notification.permission !== 'granted') {
@@ -32,6 +61,7 @@ const ChatRoom = ({ username }) => {
       if (Notification.permission === 'granted') {
         new Notification(`${msg.username}: ${msg.message}`);
       }
+      if (notificationAudioRef.current) notificationAudioRef.current.play();
     });
 
     socket.on('fileMessage', (msg) => {
@@ -39,6 +69,7 @@ const ChatRoom = ({ username }) => {
       if (Notification.permission === 'granted') {
         new Notification(`${msg.username} sent a file: ${msg.filename}`);
       }
+      if (notificationAudioRef.current) notificationAudioRef.current.play();
     });
 
     socket.on('messageReaction', ({ messageId, reaction }) => {
@@ -71,6 +102,16 @@ const ChatRoom = ({ username }) => {
       }
     });
 
+    socket.on('delivered', ({ messageId }) => {
+      setMessages((prev) => prev.map(m => m.id === messageId ? { ...m, delivered: true } : m));
+    });
+    socket.on('read', ({ messageId }) => {
+      setMessages((prev) => prev.map(m => m.id === messageId ? { ...m, read: true } : m));
+    });
+
+    socket.on('connect', () => setIsConnected(true));
+    socket.on('disconnect', () => setIsConnected(false));
+
     return () => {
       socket.off('chatMessage');
       socket.off('fileMessage');
@@ -78,7 +119,23 @@ const ChatRoom = ({ username }) => {
       socket.off('userTyping');
       socket.off('onlineUsers');
       socket.off('privateMessage');
+      socket.off('delivered');
+      socket.off('read');
+      socket.off('connect');
+      socket.off('disconnect');
     };
+  }, [currentRoom]);
+
+  // On room change, reset pagination and fetch latest
+  useEffect(() => {
+    setPage(1);
+    setHasMore(true);
+    fetchMessages(currentRoom, 1, false);
+  }, [currentRoom]);
+
+  // Emit readMessages when chat is opened or room changes
+  useEffect(() => {
+    socket.emit('readMessages', currentRoom);
   }, [currentRoom]);
 
   const handleSend = () => {
@@ -126,8 +183,21 @@ const ChatRoom = ({ username }) => {
     typingTimeout.current = setTimeout(() => {}, 2000);
   };
 
+  // Load older messages
+  const handleLoadOlder = async () => {
+    const nextPage = page + 1;
+    await fetchMessages(currentRoom, nextPage, true);
+    setPage(nextPage);
+  };
+
   return (
     <div style={{ maxWidth: 500, margin: 'auto' }}>
+      {!isConnected && (
+        <div style={{ color: 'red', marginBottom: 8 }}>Connection lost. Trying to reconnect...</div>
+      )}
+      {error && (
+        <div style={{ color: 'red', marginBottom: 8 }}>{error}</div>
+      )}
       <h2>Room: {currentRoom}</h2>
       <select value={currentRoom} onChange={handleRoomChange}>
         {rooms.map((room) => (
@@ -137,8 +207,25 @@ const ChatRoom = ({ username }) => {
       <div style={{ margin: '10px 0', fontSize: '0.9em', color: '#555' }}>
         <strong>Online users:</strong> {onlineUsers.join(', ')}
       </div>
+      <input
+        type="text"
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        placeholder="Search messages..."
+        style={{ width: '100%', marginBottom: 8 }}
+      />
       <div style={{ border: '1px solid #ccc', height: 300, overflowY: 'auto', margin: '10px 0', padding: 10 }}>
-        {messages.map((msg, idx) => (
+        {hasMore && (
+          <button onClick={handleLoadOlder} disabled={loading} style={{ width: '100%' }}>
+            {loading ? <span>Loading <span className="spinner" style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid #ccc', borderTop: '2px solid #333', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></span></span> : 'Load older messages'}
+          </button>
+        )}
+        {messages.filter(msg =>
+          (!search ||
+            (msg.message && msg.message.toLowerCase().includes(search.toLowerCase())) ||
+            (msg.username && msg.username.toLowerCase().includes(search.toLowerCase()))
+          )
+        ).map((msg, idx) => (
           <div key={idx} style={{ marginBottom: 10, background: msg.private ? '#ffe' : 'inherit' }}>
             <strong>{msg.username}</strong> [{new Date(msg.timestamp).toLocaleTimeString()}]:
             {msg.private && <span style={{ color: 'red' }}> (private)</span>}
@@ -151,6 +238,16 @@ const ChatRoom = ({ username }) => {
                   <img src={msg.file} alt={msg.filename} style={{ maxWidth: 200 }} />
                 )}
               </div>
+            )}
+            {/* Delivery/read checkmark for own messages */}
+            {msg.username === username && (
+              <span style={{ marginLeft: 8 }}>
+                {msg.read ? (
+                  <span title="Read" style={{ color: 'green' }}>✔</span>
+                ) : msg.delivered ? (
+                  <span title="Delivered" style={{ color: 'gray' }}>✔</span>
+                ) : null}
+              </span>
             )}
             <div>
               <button onClick={() => handleReaction(idx, '👍')}>👍</button>
@@ -196,6 +293,10 @@ const ChatRoom = ({ username }) => {
           </select>
         </label>
       </div>
+      <audio ref={notificationAudioRef} src="https://cdn.pixabay.com/audio/2022/07/26/audio_124bfa1c82.mp3" preload="auto" />
+      <style>{`
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+      `}</style>
     </div>
   );
 };

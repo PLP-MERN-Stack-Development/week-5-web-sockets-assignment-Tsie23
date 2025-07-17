@@ -24,6 +24,7 @@ let roomUsers = {}; // room -> [username]
 let messages = {}; // room -> [{ username, message, timestamp, type, filename, file }]
 let unreadCounts = {}; // room -> { username -> count }
 let registeredUsers = []; // Array of usernames
+let messageIdCounter = 0;
 
 // Middleware
 app.use(express.json());
@@ -62,17 +63,22 @@ io.on('connection', (socket) => {
   // Broadcast chat message and store
   socket.on('roomMessage', ({ room, message, username }) => {
     const msgObj = {
+      id: messageIdCounter++,
       username,
       message,
       timestamp: new Date().toISOString(),
-      type: 'text'
+      type: 'text',
+      delivered: false,
+      read: false
     };
     if (!messages[room]) messages[room] = [];
     messages[room].push(msgObj);
     // Limit to last 100 messages per room
     if (messages[room].length > 100) messages[room] = messages[room].slice(-100);
     io.to(room).emit('chatMessage', msgObj);
-
+    // Delivery acknowledgment
+    const senderId = Object.keys(users).find(id => users[id].username === username && users[id].room === room);
+    if (senderId) io.to(senderId).emit('delivered', { messageId: msgObj.id });
     // Increment unread count for others
     Object.keys(users).forEach(id => {
       if (users[id].room === room && users[id].username !== username) {
@@ -125,6 +131,15 @@ io.on('connection', (socket) => {
     if (users[socket.id]) {
       unreadCounts[room][users[socket.id].username] = 0;
       socket.emit('unreadCount', 0);
+      // Mark all messages as read for this user
+      if (messages[room]) {
+        messages[room].forEach(msg => { msg.read = true; });
+        // Notify sender(s) that their messages have been read
+        messages[room].forEach(msg => {
+          const senderId = Object.keys(users).find(id => users[id].username === msg.username && users[id].room === room);
+          if (senderId) io.to(senderId).emit('read', { messageId: msg.id });
+        });
+      }
     }
   });
 
