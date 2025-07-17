@@ -1,0 +1,41 @@
+/* Minimal CSS Reset */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: 'Segoe UI', Arial, sans-serif;
+  background: #f7f7f7;
+  color: #222;
+}
+
+button, input, select {
+  font-family: inherit;
+  font-size: 1em;
+}
+
+/* Utility classes */
+.text-center { text-align: center; }
+.mt-2 { margin-top: 0.5rem; }
+.mb-2 { margin-bottom: 0.5rem; }
+
+/* Responsive container (optional, for future use) */
+.container {
+  max-width: 500px;
+  margin: auto;
+  padding: 16px;
+}
+
+@media (max-width: 600px) {
+  .container {
+    max-width: 100vw;
+    padding: 4vw;
+  }
+  input, button, select {
+    width: 100% !important;
+    margin-bottom: 8px;
+  }
+} 

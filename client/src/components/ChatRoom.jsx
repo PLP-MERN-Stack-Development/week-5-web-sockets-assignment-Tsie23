@@ -4,11 +4,10 @@ import {
   sendRoomMessage,
   sendFileMessage,
   reactToMessage,
-  socket,
 } from '../socket/socket';
 import axios from 'axios';
 
-const ChatRoom = ({ username }) => {
+const ChatRoom = ({ username, socket }) => {
   const [currentRoom, setCurrentRoom] = useState('general');
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
@@ -35,9 +34,9 @@ const ChatRoom = ({ username }) => {
       const msgs = res.data;
       if (msgs.length === 0) setHasMore(false);
       if (prepend) {
-        setMessages((prev) => [...msgs, ...prev]);
+        setMessages((prev) => Array.isArray(msgs) ? [...msgs, ...prev] : prev);
       } else {
-        setMessages(msgs);
+        setMessages(Array.isArray(msgs) ? msgs : []);
       }
     } catch (err) {
       setHasMore(false);
@@ -52,9 +51,7 @@ const ChatRoom = ({ username }) => {
       Notification.requestPermission();
     }
 
-    joinRoom(currentRoom);
-
-    socket.emit('getOnlineUsers', currentRoom);
+    if (!socket) return;
 
     socket.on('chatMessage', (msg) => {
       setMessages((prev) => [...prev, msg]);
@@ -124,21 +121,22 @@ const ChatRoom = ({ username }) => {
       socket.off('connect');
       socket.off('disconnect');
     };
-  }, [currentRoom]);
+  }, [socket, currentRoom]);
 
-  // On room change, reset pagination and fetch latest
   useEffect(() => {
+    if (!socket) return;
     setPage(1);
     setHasMore(true);
     fetchMessages(currentRoom, 1, false);
-  }, [currentRoom]);
+  }, [socket, currentRoom]);
 
-  // Emit readMessages when chat is opened or room changes
   useEffect(() => {
+    if (!socket) return;
     socket.emit('readMessages', currentRoom);
-  }, [currentRoom]);
+  }, [socket, currentRoom]);
 
   const handleSend = () => {
+    if (!socket) return;
     if (message.trim()) {
       if (privateRecipient) {
         socket.emit('privateMessage', {
@@ -148,7 +146,7 @@ const ChatRoom = ({ username }) => {
           timestamp: new Date().toISOString(),
         });
       } else {
-        sendRoomMessage(currentRoom, message, username);
+        socket.emit('roomMessage', { room: currentRoom, message, username });
       }
       setMessage('');
       setPrivateRecipient('');
@@ -158,27 +156,34 @@ const ChatRoom = ({ username }) => {
   const handleRoomChange = (e) => {
     setCurrentRoom(e.target.value);
     setMessages([]);
-    joinRoom(e.target.value);
-    socket.emit('getOnlineUsers', e.target.value);
+    if (socket) {
+      socket.emit('joinRoom', e.target.value);
+      socket.emit('getOnlineUsers', e.target.value);
+    }
   };
 
   const handleFileChange = (e) => {
+    if (!socket) return;
     const fileObj = e.target.files[0];
     if (!fileObj) return;
     const reader = new FileReader();
     reader.onload = () => {
-      sendFileMessage(currentRoom, reader.result, fileObj.name, username);
+      socket.emit('fileMessage', { room: currentRoom, file: reader.result, filename: fileObj.name, username });
     };
     reader.readAsDataURL(fileObj);
     setFile(null);
   };
 
   const handleReaction = (idx, reaction) => {
-    reactToMessage(idx, reaction, currentRoom);
+    if (socket) {
+      socket.emit('reactMessage', { messageId: idx, reaction, room: currentRoom });
+    }
   };
 
   const handleTyping = () => {
-    socket.emit('typing', { room: currentRoom, username });
+    if (socket) {
+      socket.emit('typing', { room: currentRoom, username });
+    }
     if (typingTimeout.current) clearTimeout(typingTimeout.current);
     typingTimeout.current = setTimeout(() => {}, 2000);
   };
@@ -220,7 +225,7 @@ const ChatRoom = ({ username }) => {
             {loading ? <span>Loading <span className="spinner" style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid #ccc', borderTop: '2px solid #333', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></span></span> : 'Load older messages'}
           </button>
         )}
-        {messages.filter(msg =>
+        {(Array.isArray(messages) ? messages : []).filter(msg =>
           (!search ||
             (msg.message && msg.message.toLowerCase().includes(search.toLowerCase())) ||
             (msg.username && msg.username.toLowerCase().includes(search.toLowerCase()))
@@ -293,7 +298,7 @@ const ChatRoom = ({ username }) => {
           </select>
         </label>
       </div>
-      <audio ref={notificationAudioRef} src="https://cdn.pixabay.com/audio/2022/07/26/audio_124bfa1c82.mp3" preload="auto" />
+      <audio ref={notificationAudioRef} src="https://cdn.jsdelivr.net/gh/naptha/tinysound@master/beep.mp3" preload="auto" />
       <style>{`
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
       `}</style>

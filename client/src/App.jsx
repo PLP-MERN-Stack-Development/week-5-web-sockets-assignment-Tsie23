@@ -1,104 +1,45 @@
-import { useEffect, useState } from 'react';
-import { useSocket } from './socket/socket';
+import React, { useState } from 'react';
+import ChatRoom from './components/ChatRoom';
+import { io } from 'socket.io-client';
+import './index.css';
+
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
 
 function App() {
   const [username, setUsername] = useState('');
-  const [message, setMessage] = useState('');
-  const [privateId, setPrivateId] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
-
-  const {
-    connect,
-    disconnect,
-    sendMessage,
-    sendPrivateMessage,
-    setTyping,
-    messages,
-    users,
-    typingUsers,
-    isConnected,
-  } = useSocket();
-
-  useEffect(() => {
-    setTyping(isTyping);
-  }, [isTyping]);
-
-  const handleSend = () => {
-    if (privateId) {
-      sendPrivateMessage(privateId, message);
-    } else {
-      sendMessage(message);
-    }
-    setMessage('');
-    setIsTyping(false);
-  };
+  const [input, setInput] = useState('');
+  const [socket, setSocket] = useState(null);
 
   const handleJoin = () => {
-    connect(username);
+    if (input) {
+      const s = io(SOCKET_URL, {
+        query: { username: input },
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+      });
+      setSocket(s);
+      setUsername(input);
+    }
   };
 
   return (
-    <>
-      <style>{`
-        .container {
-          max-width: 500px;
-          margin: auto;
-          padding: 16px;
-        }
-        @media (max-width: 600px) {
-          .container {
-            max-width: 100vw;
-            padding: 4vw;
-          }
-          input, button, select {
-            width: 100% !important;
-            margin-bottom: 8px;
-          }
-        }
-      `}</style>
-      <div className="container">
-        {!isConnected ? (
-          <div>
-            <input
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="Enter username (e.g. Thato)"
-            />
-            <button onClick={handleJoin}>Join Chat</button>
-          </div>
-        ) : (
-          <div>
-            <div>
-              <input
-                value={message}
-                onChange={(e) => {
-                  setMessage(e.target.value);
-                  setIsTyping(true);
-                }}
-                placeholder="Type your message..."
-                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-              />
-              <input
-                value={privateId}
-                onChange={(e) => setPrivateId(e.target.value)}
-                placeholder="Private recipient ID (optional)"
-              />
-              <button onClick={handleSend}>Send</button>
-              <button onClick={disconnect}>Leave Chat</button>
-            </div>
-
-            <div>
-              {typingUsers.length > 0 && <p>{typingUsers.join(', ')} is typing...</p>}
-              {messages.map((msg) => (
-                <p key={msg.id}>
-                  <strong>{msg.sender}:</strong> {msg.message}
-                </p>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </>
+    <div style={{ maxWidth: 500, margin: '40px auto', textAlign: 'center' }}>
+      {!username ? (
+        <div>
+          <input
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            placeholder="Enter your username"
+            style={{ width: '60%', marginRight: 8 }}
+          />
+          <button onClick={handleJoin}>Join Chat</button>
+        </div>
+      ) : (
+        <ChatRoom username={username} socket={socket} />
+      )}
+    </div>
   );
 }
+
 export default App;
