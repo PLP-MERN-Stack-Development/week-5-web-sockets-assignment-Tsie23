@@ -47,11 +47,29 @@ const ChatRoom = ({ username, socket }) => {
   };
 
   useEffect(() => {
+    if (!socket) return;
+    // Always join the current room after socket connects or room changes
+    socket.emit('joinRoom', currentRoom);
+    socket.emit('getOnlineUsers', currentRoom);
+  }, [socket, currentRoom]);
+
+  useEffect(() => {
     if (Notification.permission !== 'granted') {
       Notification.requestPermission();
     }
-
     if (!socket) return;
+    // Remove all listeners before adding new ones to avoid duplicates
+    socket.off('chatMessage');
+    socket.off('fileMessage');
+    socket.off('systemMessage');
+    socket.off('messageReaction');
+    socket.off('userTyping');
+    socket.off('onlineUsers');
+    socket.off('privateMessage');
+    socket.off('delivered');
+    socket.off('read');
+    socket.off('connect');
+    socket.off('disconnect');
 
     socket.on('chatMessage', (msg) => {
       setMessages((prev) => [...prev, msg]);
@@ -60,7 +78,6 @@ const ChatRoom = ({ username, socket }) => {
       }
       if (notificationAudioRef.current) notificationAudioRef.current.play();
     });
-
     socket.on('fileMessage', (msg) => {
       setMessages((prev) => [...prev, msg]);
       if (Notification.permission === 'granted') {
@@ -68,17 +85,16 @@ const ChatRoom = ({ username, socket }) => {
       }
       if (notificationAudioRef.current) notificationAudioRef.current.play();
     });
-
+    socket.on('systemMessage', (msg) => {
+      setMessages((prev) => [...prev, { ...msg, system: true }]);
+    });
     socket.on('messageReaction', ({ messageId, reaction }) => {
       setMessages((prev) =>
-        prev.map((m, idx) =>
-          idx === messageId
-            ? { ...m, reaction }
-            : m
+        prev.map((m) =>
+          m.id === messageId ? { ...m, reaction } : m
         )
       );
     });
-
     socket.on('userTyping', ({ username: typingUser }) => {
       setTypingUsers((prev) =>
         prev.includes(typingUser) ? prev : [...prev, typingUser]
@@ -87,31 +103,28 @@ const ChatRoom = ({ username, socket }) => {
         setTypingUsers((prev) => prev.filter((u) => u !== typingUser));
       }, 2000);
     });
-
     socket.on('onlineUsers', (users) => {
       setOnlineUsers(users);
     });
-
     socket.on('privateMessage', (msg) => {
       setMessages((prev) => [...prev, { ...msg, private: true }]);
       if (Notification.permission === 'granted') {
         new Notification(`Private from ${msg.username}: ${msg.message}`);
       }
+      if (notificationAudioRef.current) notificationAudioRef.current.play();
     });
-
     socket.on('delivered', ({ messageId }) => {
       setMessages((prev) => prev.map(m => m.id === messageId ? { ...m, delivered: true } : m));
     });
     socket.on('read', ({ messageId }) => {
       setMessages((prev) => prev.map(m => m.id === messageId ? { ...m, read: true } : m));
     });
-
     socket.on('connect', () => setIsConnected(true));
     socket.on('disconnect', () => setIsConnected(false));
-
     return () => {
       socket.off('chatMessage');
       socket.off('fileMessage');
+      socket.off('systemMessage');
       socket.off('messageReaction');
       socket.off('userTyping');
       socket.off('onlineUsers');
@@ -174,9 +187,9 @@ const ChatRoom = ({ username, socket }) => {
     setFile(null);
   };
 
-  const handleReaction = (idx, reaction) => {
+  const handleReaction = (msgId, reaction) => {
     if (socket) {
-      socket.emit('reactMessage', { messageId: idx, reaction, room: currentRoom });
+      socket.emit('reactMessage', { messageId: msgId, reaction, room: currentRoom });
     }
   };
 
@@ -225,41 +238,42 @@ const ChatRoom = ({ username, socket }) => {
             {loading ? <span>Loading <span className="spinner" style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid #ccc', borderTop: '2px solid #333', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></span></span> : 'Load older messages'}
           </button>
         )}
-        {(Array.isArray(messages) ? messages : []).filter(msg =>
-          (!search ||
-            (msg.message && msg.message.toLowerCase().includes(search.toLowerCase())) ||
-            (msg.username && msg.username.toLowerCase().includes(search.toLowerCase()))
-          )
-        ).map((msg, idx) => (
-          <div key={idx} style={{ marginBottom: 10, background: msg.private ? '#ffe' : 'inherit' }}>
-            <strong>{msg.username}</strong> [{new Date(msg.timestamp).toLocaleTimeString()}]:
-            {msg.private && <span style={{ color: 'red' }}> (private)</span>}
-            {msg.message && <span> {msg.message}</span>}
-            {msg.file && (
-              <div>
-                <a href={msg.file} download={msg.filename}>{msg.filename}</a>
-                <br />
-                {msg.file.startsWith('data:image') && (
-                  <img src={msg.file} alt={msg.filename} style={{ maxWidth: 200 }} />
+        {messages.filter(m => m.message && (!search || m.message.toLowerCase().includes(search.toLowerCase()))).map((msg) => (
+          <div key={msg.id || msg.timestamp} style={{ marginBottom: 10, background: msg.private ? '#ffe' : msg.system ? '#eef' : 'inherit', fontStyle: msg.system ? 'italic' : 'normal', color: msg.system ? '#555' : 'inherit' }}>
+            {msg.system ? (
+              <span>{msg.message}</span>
+            ) : (
+              <>
+                <strong>{msg.username}</strong> [{new Date(msg.timestamp).toLocaleTimeString()}]:
+                {msg.private && <span style={{ color: 'red' }}> (private)</span>}
+                {msg.message && <span> {msg.message}</span>}
+                {msg.file && (
+                  <div>
+                    <a href={msg.file} download={msg.filename}>{msg.filename}</a>
+                    <br />
+                    {msg.file.startsWith('data:image') && (
+                      <img src={msg.file} alt={msg.filename} style={{ maxWidth: 200 }} />
+                    )}
+                  </div>
                 )}
-              </div>
+                {/* Delivery/read checkmark for own messages */}
+                {msg.username === username && (
+                  <span style={{ marginLeft: 8 }}>
+                    {msg.read ? (
+                      <span title="Read" style={{ color: 'green' }}>✔</span>
+                    ) : msg.delivered ? (
+                      <span title="Delivered" style={{ color: 'gray' }}>✔</span>
+                    ) : null}
+                  </span>
+                )}
+                <div>
+                  <button onClick={() => handleReaction(msg.id, '👍')}>👍</button>
+                  <button onClick={() => handleReaction(msg.id, '😂')}>😂</button>
+                  <button onClick={() => handleReaction(msg.id, '❤️')}>❤️</button>
+                  {msg.reaction && <span> {msg.reaction}</span>}
+                </div>
+              </>
             )}
-            {/* Delivery/read checkmark for own messages */}
-            {msg.username === username && (
-              <span style={{ marginLeft: 8 }}>
-                {msg.read ? (
-                  <span title="Read" style={{ color: 'green' }}>✔</span>
-                ) : msg.delivered ? (
-                  <span title="Delivered" style={{ color: 'gray' }}>✔</span>
-                ) : null}
-              </span>
-            )}
-            <div>
-              <button onClick={() => handleReaction(idx, '👍')}>👍</button>
-              <button onClick={() => handleReaction(idx, '😂')}>😂</button>
-              <button onClick={() => handleReaction(idx, '❤️')}>❤️</button>
-              {msg.reaction && <span> {msg.reaction}</span>}
-            </div>
           </div>
         ))}
         {typingUsers.length > 0 && (
@@ -298,7 +312,7 @@ const ChatRoom = ({ username, socket }) => {
           </select>
         </label>
       </div>
-      <audio ref={notificationAudioRef} src="https://cdn.jsdelivr.net/gh/naptha/tinysound@master/beep.mp3" preload="auto" />
+      <audio ref={notificationAudioRef} src="https://upload.wikimedia.org/wikipedia/commons/8/8e/Beep-sound.mp3" preload="auto" />
       <style>{`
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
       `}</style>

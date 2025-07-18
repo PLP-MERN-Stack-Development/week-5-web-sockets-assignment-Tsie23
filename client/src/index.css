@@ -15,6 +15,26 @@ html, body {
 button, input, select {
   font-family: inherit;
   font-size: 1em;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  padding: 8px 12px;
+  margin: 4px 0;
+  transition: border 0.2s, box-shadow 0.2s;
+}
+button {
+  background: #4f8cff;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(79,140,255,0.08);
+}
+button:hover {
+  background: #2563eb;
+}
+input:focus, select:focus {
+  border: 1.5px solid #4f8cff;
+  outline: none;
 }
 
 /* Utility classes */
@@ -22,20 +42,52 @@ button, input, select {
 .mt-2 { margin-top: 0.5rem; }
 .mb-2 { margin-bottom: 0.5rem; }
 
-/* Responsive container (optional, for future use) */
 .container {
   max-width: 500px;
   margin: auto;
   padding: 16px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+}
+
+.chat-bubble {
+  display: inline-block;
+  padding: 10px 16px;
+  border-radius: 16px;
+  margin-bottom: 6px;
+  background: #e6f0ff;
+  color: #222;
+  max-width: 80vw;
+  word-break: break-word;
+}
+.chat-bubble.me {
+  background: #d1fae5;
+  align-self: flex-end;
+}
+.chat-bubble.private {
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
+}
+.chat-bubble.system {
+  background: #eef;
+  color: #555;
+  font-style: italic;
 }
 
 @media (max-width: 600px) {
   .container {
     max-width: 100vw;
     padding: 4vw;
+    border-radius: 0;
+    box-shadow: none;
   }
   input, button, select {
     width: 100% !important;
     margin-bottom: 8px;
+  }
+  .chat-bubble {
+    max-width: 95vw;
+    font-size: 1em;
   }
 } 

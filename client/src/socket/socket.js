@@ -5,8 +5,8 @@ import { io } from 'socket.io-client';
 // Socket.io connection URL
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
 
-// Create socket instance (do not autoConnect)
-export const socket = io(SOCKET_URL, {
+// Create socket instance for /chat namespace (do not autoConnect)
+export const socket = io(`${SOCKET_URL}/chat`, {
   autoConnect: false,
   reconnection: true,
   reconnectionAttempts: 5,

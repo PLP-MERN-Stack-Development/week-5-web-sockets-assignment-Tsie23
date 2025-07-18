@@ -18,29 +18,38 @@ const io = new Server(server, {
   cors: { origin: '*' }
 });
 
-// Track users and rooms
+const chatNamespace = io.of('/chat');
+
+// Track users and rooms (move these inside the namespace if needed)
 let users = {}; // socket.id -> { username, room }
 let roomUsers = {}; // room -> [username]
 let messages = {}; // room -> [{ username, message, timestamp, type, filename, file }]
 let unreadCounts = {}; // room -> { username -> count }
-let registeredUsers = []; // Array of usernames
+let registeredUsers = [];
 let messageIdCounter = 0;
 
 // Middleware
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Socket.io connection handler
-io.on('connection', (socket) => {
+// Socket.io namespace connection handler
+chatNamespace.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
 
   // Join a room
   socket.on('joinRoom', (room) => {
+    let prevRoom = null;
     if (users[socket.id]) {
       // Remove from previous room
-      const prevRoom = users[socket.id].room;
+      prevRoom = users[socket.id].room;
       if (roomUsers[prevRoom]) {
         roomUsers[prevRoom] = roomUsers[prevRoom].filter(u => u !== users[socket.id].username);
+        // Emit system message for leave
+        chatNamespace.to(prevRoom).emit('systemMessage', {
+          message: `${users[socket.id].username} left the room`,
+          timestamp: new Date().toISOString(),
+          system: true
+        });
       }
       socket.leave(prevRoom);
     }
@@ -52,12 +61,18 @@ io.on('connection', (socket) => {
     }
     if (!unreadCounts[room]) unreadCounts[room] = {};
     unreadCounts[room][users[socket.id].username] = 0;
-    io.to(room).emit('onlineUsers', roomUsers[room]);
+    chatNamespace.to(room).emit('onlineUsers', roomUsers[room]);
+    // Emit system message for join
+    chatNamespace.to(room).emit('systemMessage', {
+      message: `${users[socket.id].username} joined the room`,
+      timestamp: new Date().toISOString(),
+      system: true
+    });
   });
 
   // Get online users for a room
   socket.on('getOnlineUsers', (room) => {
-    io.to(socket.id).emit('onlineUsers', roomUsers[room] || []);
+    chatNamespace.to(socket.id).emit('onlineUsers', roomUsers[room] || []);
   });
 
   // Broadcast chat message and store
@@ -75,16 +90,16 @@ io.on('connection', (socket) => {
     messages[room].push(msgObj);
     // Limit to last 100 messages per room
     if (messages[room].length > 100) messages[room] = messages[room].slice(-100);
-    io.to(room).emit('chatMessage', msgObj);
+    chatNamespace.to(room).emit('chatMessage', msgObj);
     // Delivery acknowledgment
     const senderId = Object.keys(users).find(id => users[id].username === username && users[id].room === room);
-    if (senderId) io.to(senderId).emit('delivered', { messageId: msgObj.id });
+    if (senderId) chatNamespace.to(senderId).emit('delivered', { messageId: msgObj.id });
     // Increment unread count for others
     Object.keys(users).forEach(id => {
       if (users[id].room === room && users[id].username !== username) {
         if (!unreadCounts[room]) unreadCounts[room] = {};
         unreadCounts[room][users[id].username] = (unreadCounts[room][users[id].username] || 0) + 1;
-        io.to(id).emit('unreadCount', unreadCounts[room][users[id].username]);
+        chatNamespace.to(id).emit('unreadCount', unreadCounts[room][users[id].username]);
       }
     });
   });
@@ -101,17 +116,17 @@ io.on('connection', (socket) => {
     if (!messages[room]) messages[room] = [];
     messages[room].push(msgObj);
     if (messages[room].length > 100) messages[room] = messages[room].slice(-100);
-    io.to(room).emit('fileMessage', msgObj);
+    chatNamespace.to(room).emit('fileMessage', msgObj);
   });
 
   // Broadcast typing indicator
   socket.on('typing', ({ room, username }) => {
-    socket.to(room).emit('userTyping', { username });
+    chatNamespace.to(room).emit('userTyping', { username });
   });
 
   // Message reactions
   socket.on('reactMessage', ({ messageId, reaction, room }) => {
-    io.to(room).emit('messageReaction', { messageId, reaction });
+    chatNamespace.to(room).emit('messageReaction', { messageId, reaction });
   });
 
   // Private messaging
@@ -121,8 +136,8 @@ io.on('connection', (socket) => {
       id => users[id].username === to && users[id].room === users[socket.id].room
     );
     if (recipientId) {
-      io.to(recipientId).emit('privateMessage', { username, message, timestamp });
-      io.to(socket.id).emit('privateMessage', { username, message, timestamp }); // echo to sender
+      chatNamespace.to(recipientId).emit('privateMessage', { username, message, timestamp });
+      chatNamespace.to(socket.id).emit('privateMessage', { username, message, timestamp }); // echo to sender
     }
   });
 
@@ -137,7 +152,7 @@ io.on('connection', (socket) => {
         // Notify sender(s) that their messages have been read
         messages[room].forEach(msg => {
           const senderId = Object.keys(users).find(id => users[id].username === msg.username && users[id].room === room);
-          if (senderId) io.to(senderId).emit('read', { messageId: msg.id });
+          if (senderId) chatNamespace.to(senderId).emit('read', { messageId: msg.id });
         });
       }
     }
@@ -150,7 +165,13 @@ io.on('connection', (socket) => {
       const { room, username } = user;
       if (roomUsers[room]) {
         roomUsers[room] = roomUsers[room].filter(u => u !== username);
-        io.to(room).emit('onlineUsers', roomUsers[room]);
+        chatNamespace.to(room).emit('onlineUsers', roomUsers[room]);
+        // Emit system message for leave
+        chatNamespace.to(room).emit('systemMessage', {
+          message: `${username} left the room`,
+          timestamp: new Date().toISOString(),
+          system: true
+        });
       }
       delete users[socket.id];
     }
